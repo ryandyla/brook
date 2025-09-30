@@ -260,7 +260,7 @@ function renderPage({ title, content }) {
 
 .logo {
   height: 32px;
-  filter: brightness(200%); /* brighten dark logo against dark bg */
+  filter: brightness(400%); /* brighten dark logo against dark bg */
 }
     </style>
   </head><body><div class="container">${content}</div></body></html>`;
