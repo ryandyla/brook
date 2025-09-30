@@ -251,8 +251,17 @@ function renderPage({ title, content }) {
       .eligibility { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--chip); }
       .eligibility-tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
       .eligibility-badge { background: var(--accent); color:#fff; padding:4px 10px; border-radius:999px; font-size:13px; font-weight:500; }
-      .header { border-bottom: 1px solid var(--border);  padding-bottom: 8px; margin-bottom: 12px; background: #ffffff; /* white bar */ padding: 6px 10px border-radius: 8px; }
-      .logo { height: 32px; background: #ffffff; /* keep transparent logos readable */ padding: 2px; border-radius: 4px; }
+.header {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  /* no background here */
+}
+
+.logo {
+  height: 32px;
+  filter: brightness(200%); /* brighten dark logo against dark bg */
+}
     </style>
   </head><body><div class="container">${content}</div></body></html>`;
 }
