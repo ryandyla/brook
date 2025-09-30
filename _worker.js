@@ -1,24 +1,21 @@
 export default {
   async fetch(request, env, ctx) {
-    // 1) Try to serve static files (like /brook.png)
-    const assetResp = await env.ASSETS.fetch(request);
-    if (assetResp.status !== 404) {
-      return assetResp;
+    // ---- 1) Try static assets first (brook.png, etc.) ----
+    try {
+      const assetResp = await env.ASSETS.fetch(request);
+      if (assetResp && assetResp.status !== 404) return assetResp;
+    } catch (_) {
+      // If ASSETS isn’t bound (rare), we’ll continue
     }
 
-    // 2) If no static file matched, continue with your Worker logic
+    // Optional: belt-and-suspenders fallback for /brook.png from env var
     const url = new URL(request.url);
-    const q = url.searchParams;
-    const demo = q.get("demo") === "1";
-    const rawPhone = (q.get("phone") || "").trim();
+    if (url.pathname === "/brook.png" && env.BROOK_LOGO_B64) {
+      const bin = Uint8Array.from(atob(env.BROOK_LOGO_B64), c => c.charCodeAt(0));
+      return new Response(bin, { headers: { "content-type": "image/png" } });
+    }
 
-    // ... rest of your caller lookup code
-  }
-}
-
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+    // ---- 2) Dynamic caller lookup page ----
     const q = url.searchParams;
     const demo = q.get("demo") === "1";
     const rawPhone = (q.get("phone") || "").trim();
@@ -97,7 +94,6 @@ function coerceToCallerSchema(p, phoneE164) {
     clinic: p.clinic_name || "",
     provider: p.provider_name || "",
 
-    // Extras if you ever want them
     altPhones: [],
     meta: {}
   };
@@ -121,14 +117,13 @@ function renderForm(prefill = "") {
 function renderCallerLayout(d, ctx) {
   return /*html*/`
   <section class="stack gap-4">
-  <header class="row items-center justify-between header">
-    <div class="row items-center gap-2">
-      <img src="brook.png" alt="Brook Health" class="logo" />
-      <h1 class="h1">Caller Info</h1>
-    </div>
-    <span class="muted">Searched: ${esc(ctx.searched || "")}</span>
-  </header>
-
+    <header class="row items-center justify-between header">
+      <div class="row items-center gap-2">
+        <img src="/brook.png" alt="Brook Health" class="logo" />
+        <h1 class="h1">Caller Info</h1>
+      </div>
+      <span class="muted">Searched: ${esc(ctx.searched || "")}</span>
+    </header>
 
     <div class="grid">
       <div class="stack gap-4">
