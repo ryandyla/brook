@@ -1,5 +1,23 @@
 export default {
   async fetch(request, env, ctx) {
+    // 1) Try to serve static files (like /brook.png)
+    const assetResp = await env.ASSETS.fetch(request);
+    if (assetResp.status !== 404) {
+      return assetResp;
+    }
+
+    // 2) If no static file matched, continue with your Worker logic
+    const url = new URL(request.url);
+    const q = url.searchParams;
+    const demo = q.get("demo") === "1";
+    const rawPhone = (q.get("phone") || "").trim();
+
+    // ... rest of your caller lookup code
+  }
+}
+
+export default {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const q = url.searchParams;
     const demo = q.get("demo") === "1";
