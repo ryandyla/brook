@@ -103,10 +103,14 @@ function renderForm(prefill = "") {
 function renderCallerLayout(d, ctx) {
   return /*html*/`
   <section class="stack gap-4">
-    <header class="row items-center justify-between">
+  <header class="row items-center justify-between header">
+    <div class="row items-center gap-2">
+      <img src="/brook.png" alt="Brook Health" class="logo" />
       <h1 class="h1">Caller Info</h1>
-      <span class="muted">Searched: ${esc(ctx.searched || "")}</span>
-    </header>
+    </div>
+    <span class="muted">Searched: ${esc(ctx.searched || "")}</span>
+  </header>
+
 
     <div class="grid">
       <div class="stack gap-4">
@@ -234,6 +238,8 @@ function renderPage({ title, content }) {
       .eligibility { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--chip); }
       .eligibility-tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
       .eligibility-badge { background: var(--accent); color:#fff; padding:4px 10px; border-radius:999px; font-size:13px; font-weight:500; }
+      .header { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }
+      .logo { height: 32px; }
     </style>
   </head><body><div class="container">${content}</div></body></html>`;
 }
