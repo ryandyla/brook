@@ -123,7 +123,7 @@ function renderCallerLayout(d, ctx) {
   <section class="stack gap-4">
   <header class="row items-center justify-between header">
     <div class="row items-center gap-2">
-      <img src="/brook.png" alt="Brook Health" class="logo" />
+      <img src="brook.png" alt="Brook Health" class="logo" />
       <h1 class="h1">Caller Info</h1>
     </div>
     <span class="muted">Searched: ${esc(ctx.searched || "")}</span>
