@@ -125,7 +125,6 @@ function renderCallerCard(d, ctx) {
             <div class="title">${esc(d.name || "Unknown")}</div>
             <div class="muted">${esc(d.title || d.company || "")}</div>
           </div>
-          ${badgeGroup(d)}
         </div>
 
         <div class="kv">
@@ -136,6 +135,17 @@ function renderCallerCard(d, ctx) {
           ${kv("Clinic", d.meta?.Clinic || "—")}
           ${kv("Provider", d.meta?.Provider || "—")}
         </div>
+
+        ${
+          d.tags?.length
+            ? `<div class="eligibility">
+                 <div class="label">Program Eligibility</div>
+                 <div class="eligibility-tags">
+                   ${d.tags.map(t => `<span class="eligibility-badge">${esc(t)}</span>`).join("")}
+                 </div>
+               </div>`
+            : ""
+        }
 
         ${d.notes?.length ? `<div class="notes"><div class="label">Notes</div><ul>${d.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}
       </div>
@@ -152,6 +162,7 @@ function renderCallerCard(d, ctx) {
     </div>
   </section>`;
 }
+
 
 function badgeGroup(d) {
   const tags = (d.tags || []).slice(0, 5).map(t => `<span class="badge">${esc(t)}</span>`).join("");
@@ -225,6 +236,9 @@ function renderPage({ title, content }) {
       .kv-k { color:var(--muted); } .kv-v { word-break:break-word; } .sep { margin:0 6px; color:var(--muted); }
       .notes ul { margin:6px 0 0 18px; }
       .code { white-space:pre-wrap; background:#0b1220; border:1px solid var(--border); padding:10px; border-radius:10px; color:var(--muted); }
+      .eligibility { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: #0b1220; }
+      .eligibility-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+      .eligibility-badge { background: var(--accent); color: #fff; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 500; }
     </style>
   </head><body><div class="container">${content}</div></body></html>`;
 }
