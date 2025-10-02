@@ -1,3 +1,9 @@
+    // ---- This app is meant to facilitate the pop up of ----
+    // ---- information to agents receiving and making    ----
+    // ---- engagements in Zoom Contact Center. It works  ----
+    // ---- with a cloudflare worker and Brook's internal ----
+    // ---- API and returns data in a browser window.     ----
+
 export default {
   async fetch(request, env, ctx) {
     // ---- 1) Try static assets first (brook.png, etc.) ----
