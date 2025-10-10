@@ -1,8 +1,8 @@
-    // ---- This app is meant to facilitate the pop up of ----
-    // ---- information to agents receiving and making    ----
-    // ---- engagements in Zoom Contact Center. It works  ----
-    // ---- with a cloudflare worker and Brook's internal ----
-    // ---- API and returns data in a browser window.     ----
+// ---- This app is meant to facilitate the pop up of ----
+// ---- information to agents receiving and making    ----
+// ---- engagements in Zoom Contact Center. It works  ----
+// ---- with a Cloudflare Worker and Brook's internal ----
+// ---- API and returns data in a browser window.     ----
 
 export default {
   async fetch(request, env, ctx) {
@@ -11,7 +11,7 @@ export default {
       const assetResp = await env.ASSETS.fetch(request);
       if (assetResp && assetResp.status !== 404) return assetResp;
     } catch (_) {
-      // If ASSETS isn’t bound (rare), we’ll continue
+      // If ASSETS isn’t bound (rare), continue
     }
 
     // Optional: belt-and-suspenders fallback for /brook.png from env var
@@ -25,6 +25,7 @@ export default {
     const q = url.searchParams;
     const demo = q.get("demo") === "1";
     const rawPhone = (q.get("phone") || "").trim();
+    const selectedPapId = q.get("sel"); // selection from chooser
     const normalized = normalizePhone(rawPhone, env.DEFAULT_COUNTRY || "+1");
 
     if (!normalized && !demo) {
@@ -32,9 +33,35 @@ export default {
     }
 
     try {
-      const data = demo ? mockResult() : await lookupByPhone(normalized, env);
-      const view = renderCallerLayout(data, { searched: normalized || rawPhone, raw: rawPhone });
-      return html(renderPage({ title: "Caller Pop", content: view }), 200, { "Cache-Control": "no-store" });
+      // MULTI lookup (use /all-call-details)
+      const records = demo ? mockResults() : await lookupAllByPhone(normalized, env);
+
+      // 0 results → behave like "not found"
+      if (!records.length) {
+        const msg = `No records found for ${esc(normalized || rawPhone)}`;
+        return html(renderPage({ title: "Caller Pop", content: renderNotFound(msg, rawPhone) }), 200);
+      }
+
+      // If a specific selection is requested, render that one if available
+      if (selectedPapId) {
+        const chosen = records.find(r => String(r.papId ?? "") === String(selectedPapId));
+        if (chosen) {
+          const view = renderCallerLayout(chosen, { searched: normalized || rawPhone, raw: rawPhone });
+          return html(renderPage({ title: "Caller Pop", content: view }), 200, { "Cache-Control": "no-store" });
+        }
+        // If sel doesn't match, fall through to chooser
+      }
+
+      // 1 result → same detailed view as today
+      if (records.length === 1) {
+        const view = renderCallerLayout(records[0], { searched: normalized || rawPhone, raw: rawPhone });
+        return html(renderPage({ title: "Caller Pop", content: view }), 200, { "Cache-Control": "no-store" });
+      }
+
+      // 2+ results → show chooser tiles
+      const chooser = renderChooser(records, { phone: normalized || rawPhone, urlBase: url.origin + url.pathname });
+      return html(renderPage({ title: "Select Caller", content: chooser }), 200, { "Cache-Control": "no-store" });
+
     } catch (err) {
       return html(
         renderPage({ title: "Caller Pop", content: renderError(err, normalized, rawPhone) }),
@@ -44,8 +71,10 @@ export default {
   }
 };
 
-/* ---------------- API CALL & SCHEMA ---------------- */
-async function lookupByPhone(e164, env) {
+/* ---------------- API CALLS ---------------- */
+// NOTE: Set Pages env var API_URL to: https://careportal-dev.brook.health/VIQPlatform/open/users/all-call-details
+
+async function lookupAllByPhone(e164, env) {
   if (!env.API_URL) throw new Error("Missing API_URL");
   if (!env.VERIFY_TOKEN) throw new Error("Missing VERIFY_TOKEN");
   if (!e164) throw new Error("No valid phone provided");
@@ -68,8 +97,10 @@ async function lookupByPhone(e164, env) {
     throw new Error(`Upstream ${resp.status} ${resp.statusText}: ${text?.slice(0, 300)}`);
   }
 
-  const api = await resp.json();
-  return coerceToCallerSchema(api, e164);
+  // API may return a single object or an array; normalize to array
+  const json = await resp.json();
+  const arr = Array.isArray(json) ? json : (json ? [json] : []);
+  return arr.map(item => coerceToCallerSchema(item, e164));
 }
 
 async function safeText(resp) { try { return await resp.text(); } catch { return ""; } }
@@ -118,6 +149,50 @@ function renderForm(prefill = "") {
         <a class="btn btn-ghost" href="?demo=1">Demo</a>
       </div>
     </form>`;
+}
+
+function renderNotFound(message, raw) {
+  return /*html*/`
+    <div class="card p-4 stack gap-3">
+      <div class="title">No Match</div>
+      <div class="muted">${esc(message)}</div>
+      ${renderForm(raw)}
+    </div>`;
+}
+
+function renderChooser(records, ctx) {
+  const tiles = records.map(r => chooserTile(r, ctx)).join("");
+  return /*html*/`
+  <section class="stack gap-4">
+    <header class="row items-center justify-between header">
+      <div class="row items-center gap-2">
+        <img src="/brook.png" alt="Brook Health" class="logo" />
+        <h1 class="h1">Select Caller</h1>
+      </div>
+      <span class="muted">Matches for: ${esc(ctx.phone || "")}</span>
+    </header>
+
+    <div class="tiles">
+      ${tiles}
+    </div>
+
+    <div class="row wrap gap-2">
+      <a class="btn btn-ghost" href="?">New Search</a>
+    </div>
+  </section>`;
+}
+
+function chooserTile(r, ctx) {
+  const href = `${ctx.urlBase}?phone=${encodeURIComponent(ctx.phone)}&sel=${encodeURIComponent(r.papId ?? "")}`;
+  return /*html*/`
+    <a class="tile" href="${esc(href)}">
+      <div class="tile-title">${esc(r.name || "Unknown")}</div>
+      <div class="tile-meta">
+        ${r.dob ? `<span class="chip">DOB: ${esc(r.dob)}</span>` : ""}
+        ${r.papId != null ? `<span class="chip">PAP ID: ${esc(String(r.papId))}</span>` : ""}
+      </div>
+      ${(r.clinic || r.provider) ? `<div class="tile-sub">${esc([r.clinic, r.provider].filter(Boolean).join(" • "))}</div>` : ""}
+    </a>`;
 }
 
 function renderCallerLayout(d, ctx) {
@@ -254,20 +329,22 @@ function renderPage({ title, content }) {
       .kv-row { display:grid; grid-template-columns: 180px 1fr; gap:8px; } @media (max-width:600px){ .kv-row { grid-template-columns:120px 1fr; } }
       .kv-k { color: var(--muted); } .kv-v { word-break:break-word; } .sep { margin:0 6px; color:var(--muted); }
       .code { white-space:pre-wrap; background:#0b1220; border:1px solid var(--border); padding:10px; border-radius:10px; color:var(--muted); }
+
       .eligibility { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--chip); }
       .eligibility-tags { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
       .eligibility-badge { background: var(--accent); color:#fff; padding:4px 10px; border-radius:999px; font-size:13px; font-weight:500; }
-.header {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 8px;
-  margin-bottom: 12px;
-  /* no background here */
-}
 
-.logo {
-  height: 32px;
-  filter: brightness(400%); contrast(120%); /* brighten dark logo against dark bg */
-}
+      .header { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }
+      .logo { height: 32px; filter: brightness(400%) contrast(120%); } /* brighten dark logo on dark bg */
+
+      /* chooser */
+      .tiles { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+      .tile { display:block; background: var(--card); border:1px solid var(--border); border-radius: 12px; padding: 12px; text-decoration:none; color: var(--text); }
+      .tile:hover { border-color: var(--accent); }
+      .tile-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+      .tile-meta { display:flex; gap:6px; flex-wrap:wrap; margin-bottom: 4px; }
+      .tile-sub { color: var(--muted); font-size: 13px; }
+      .chip { background: var(--chip); border:1px solid var(--border); border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--text); }
     </style>
   </head><body><div class="container">${content}</div></body></html>`;
 }
@@ -292,22 +369,51 @@ function normalizePhone(input, defaultCountry = "+1") {
   return `+${digits}`;
 }
 
-/* ---------------- DEMO ---------------- */
-function mockResult() {
-  return {
-    phone: "+17146555375",
-    name: "Ryan Dyla 2",
-    papId: 302,
-    emails: ["jorge+oncm61@brook.ai"],
-    address: "123 La Cuarta Unit 12A, Morgan Hill, CA 92228",
-    dob: "1980-08-01",
-    copay: 10.0,
-    insurancePrimary: "Primary Insurance",
-    insuranceSecondary: "",
-    eligibility: ["CHF","Obesity","Diabetes","Hypertension"],
-    clinic: "One New Clinic Medical - MassAdvantage SCHEMA",
-    provider: "Dr. Jhay Booh PSDHF",
-    altPhones: [],
-    meta: {}
-  };
+/* ---------------- DEMO (multi) ---------------- */
+function mockResults() {
+  // Example multi to demo chooser
+  return [
+    {
+      phone: "+17146555375",
+      name: "Ryan Dyla",
+      papId: 302,
+      emails: ["jorge+oncm61@brook.ai"],
+      address: "123 La Cuarta Unit 12A, Morgan Hill, CA 92228",
+      dob: "1980-08-01",
+      copay: 10.0,
+      insurancePrimary: "Primary Insurance",
+      insuranceSecondary: "",
+      eligibility: ["CHF","Obesity","Diabetes","Hypertension"],
+      clinic: "One New Clinic Medical - MassAdvantage SCHEMA",
+      provider: "Dr. Jhay Booh PSDHF"
+    },
+    {
+      phone: "+17146555375",
+      name: "Ryan Dyla (MA Plan)",
+      papId: 489,
+      emails: ["jorge+oncm61+ma@brook.ai"],
+      address: "456 Harbor Blvd, Long Beach, CA 90802",
+      dob: "1980-08-01",
+      copay: 15.0,
+      insurancePrimary: "Primary Insurance",
+      insuranceSecondary: "Secondary Insurance",
+      eligibility: ["Hypertension"],
+      clinic: "Coastal Care Clinic",
+      provider: "Dr. Ana Mora"
+    },
+    {
+      phone: "+17146555375",
+      name: "Ryan C. Dyla",
+      papId: 771,
+      emails: ["jorge+oncm61+alt@brook.ai"],
+      address: "789 Ocean Ave, Long Beach, CA 90803",
+      dob: "1980-08-01",
+      copay: 0.0,
+      insurancePrimary: "Primary Insurance",
+      insuranceSecondary: "",
+      eligibility: [],
+      clinic: "Pacific Medical Group",
+      provider: "Dr. L. Nguyen"
+    }
+  ];
 }
