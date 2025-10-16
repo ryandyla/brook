@@ -25,8 +25,8 @@ export default {
     const q = url.searchParams;
     const demo = q.get("demo") === "1";
     const rawPhone = (q.get("phone") || "").trim();
-    const first = (q.get("first") || "").trim();
-    const last  = (q.get("last")  || "").trim();
+    const first = (q.get("first_name") || "").trim();
+    const last  = (q.get("last_name")  || "").trim();
     const normalized = normalizePhone(rawPhone, env.DEFAULT_COUNTRY || "+1");
 
     // If we don't have phone or names (and not in demo), show the form
