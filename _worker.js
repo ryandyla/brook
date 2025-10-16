@@ -25,42 +25,33 @@ export default {
     const q = url.searchParams;
     const demo = q.get("demo") === "1";
     const rawPhone = (q.get("phone") || "").trim();
-    const selectedPapId = q.get("sel"); // selection from chooser
+    const first = (q.get("first") || "").trim();
+    const last  = (q.get("last")  || "").trim();
     const normalized = normalizePhone(rawPhone, env.DEFAULT_COUNTRY || "+1");
 
-    if (!normalized && !demo) {
-      return html(renderPage({ title: "Caller Pop", content: renderForm(rawPhone) }));
+    // If we don't have phone or names (and not in demo), show the form
+    if ((!normalized || !first || !last) && !demo) {
+      return html(renderPage({
+        title: "Caller Pop",
+        content: renderForm({ phone: rawPhone, first, last })
+      }));
     }
 
     try {
-      // MULTI lookup (use /all-call-details)
-      const records = demo ? mockResults() : await lookupAllByPhone(normalized, env);
+      // Call-details lookup (phone + first + last)
+      const records = demo
+        ? mockResultsSingle() // keep demo path but return a single record
+        : await lookupByPhoneAndName(normalized, first, last, env);
 
-      // 0 results → behave like "not found"
+      // 0 results → not found
       if (!records.length) {
-        const msg = `No records found for ${esc(normalized || rawPhone)}`;
-        return html(renderPage({ title: "Caller Pop", content: renderNotFound(msg, rawPhone) }), 200);
+        const msg = `No records found for ${esc(normalized || rawPhone)} (${esc(first)} ${esc(last)})`;
+        return html(renderPage({ title: "Caller Pop", content: renderNotFound(msg, { phone: rawPhone, first, last } ) }), 200);
       }
 
-      // If a specific selection is requested, render that one if available
-      if (selectedPapId) {
-        const chosen = records.find(r => String(r.papId ?? "") === String(selectedPapId));
-        if (chosen) {
-          const view = renderCallerLayout(chosen, { searched: normalized || rawPhone, raw: rawPhone });
-          return html(renderPage({ title: "Caller Pop", content: view }), 200, { "Cache-Control": "no-store" });
-        }
-        // If sel doesn't match, fall through to chooser
-      }
-
-      // 1 result → same detailed view as today
-      if (records.length === 1) {
-        const view = renderCallerLayout(records[0], { searched: normalized || rawPhone, raw: rawPhone });
-        return html(renderPage({ title: "Caller Pop", content: view }), 200, { "Cache-Control": "no-store" });
-      }
-
-      // 2+ results → show chooser tiles
-      const chooser = renderChooser(records, { phone: normalized || rawPhone, urlBase: url.origin + url.pathname });
-      return html(renderPage({ title: "Select Caller", content: chooser }), 200, { "Cache-Control": "no-store" });
+      // 1 result → show details
+      const view = renderCallerLayout(records[0], { searched: `${normalized || rawPhone} • ${first} ${last}`, raw: rawPhone });
+      return html(renderPage({ title: "Caller Pop", content: view }), 200, { "Cache-Control": "no-store" });
 
     } catch (err) {
       return html(
@@ -72,15 +63,20 @@ export default {
 };
 
 /* ---------------- API CALLS ---------------- */
-// NOTE: Set Pages env var API_URL to: https://careportal-dev.brook.health/VIQPlatform/open/users/all-call-details
+// NOTE: Set Pages env var API_URL to: https://careportal-dev.brook.health/VIQPlatform/open/users/call-details
 
-async function lookupAllByPhone(e164, env) {
+async function lookupByPhoneAndName(e164, firstName, lastName, env) {
   if (!env.API_URL) throw new Error("Missing API_URL");
   if (!env.VERIFY_TOKEN) throw new Error("Missing VERIFY_TOKEN");
   if (!e164) throw new Error("No valid phone provided");
+  if (!firstName || !lastName) throw new Error("First and last name required");
 
   const digitsOnly = e164.replace(/[^\d]/g, "");
-  const body = JSON.stringify({ phone_number: digitsOnly });
+  const body = JSON.stringify({
+    phone_number: digitsOnly,
+    first_name: firstName,
+    last_name: lastName
+  });
 
   const resp = await fetch(env.API_URL, {
     method: "POST",
@@ -92,12 +88,15 @@ async function lookupAllByPhone(e164, env) {
     body
   });
 
+  // Treat 404 as "no records"
+  if (resp.status === 404) return [];
+
   if (!resp.ok) {
     const text = await safeText(resp);
     throw new Error(`Upstream ${resp.status} ${resp.statusText}: ${text?.slice(0, 300)}`);
   }
 
-  // API may return a single object or an array; normalize to array
+  // API returns a single object; normalize to array for downstream
   const json = await resp.json();
   const arr = Array.isArray(json) ? json : (json ? [json] : []);
   return arr.map(item => coerceToCallerSchema(item, e164));
@@ -137,12 +136,25 @@ function coerceToCallerSchema(p, phoneE164) {
 }
 
 /* ---------------- UI ---------------- */
-function renderForm(prefill = "") {
+function renderForm(prefill = {}) {
+  const phone = prefill.phone || "";
+  const first = prefill.first || "";
+  const last  = prefill.last  || "";
   return /*html*/`
     <form class="card p-4 gap-3" method="GET">
-      <div>
-        <label class="label">Phone number</label>
-        <input class="input" type="text" name="phone" placeholder="+17145551212 or 714-555-1212" value="${esc(prefill)}" />
+      <div class="row gap-2 wrap">
+        <div style="flex:1 1 220px">
+          <label class="label">Phone number</label>
+          <input class="input" type="text" name="phone" placeholder="+17145551212 or 714-555-1212" value="${esc(phone)}" />
+        </div>
+        <div style="flex:1 1 160px">
+          <label class="label">First name</label>
+          <input class="input" type="text" name="first" placeholder="First" value="${esc(first)}" />
+        </div>
+        <div style="flex:1 1 160px">
+          <label class="label">Last name</label>
+          <input class="input" type="text" name="last" placeholder="Last" value="${esc(last)}" />
+        </div>
       </div>
       <div class="row gap-2">
         <button class="btn" type="submit">Search</button>
@@ -151,16 +163,18 @@ function renderForm(prefill = "") {
     </form>`;
 }
 
-function renderNotFound(message, raw) {
+function renderNotFound(message, prefill) {
   return /*html*/`
     <div class="card p-4 stack gap-3">
       <div class="title">No Match</div>
       <div class="muted">${esc(message)}</div>
-      ${renderForm(raw)}
+      ${renderForm(prefill)}
     </div>`;
 }
 
 function renderChooser(records, ctx) {
+  // Kept for compatibility; not used with call-details (single result),
+  // but safe to leave in case you ever toggle back to multi.
   const tiles = records.map(r => chooserTile(r, ctx)).join("");
   return /*html*/`
   <section class="stack gap-4">
@@ -291,7 +305,7 @@ function renderError(err, normalized, raw) {
       <div class="title">Lookup failed</div>
       <div class="muted">Tried: ${esc(normalized || raw || "")}</div>
       <pre class="code">${esc(String(err?.message || err))}</pre>
-      ${renderForm(raw)}
+      ${renderForm({ phone: raw })}
     </div>`;
 }
 
@@ -321,7 +335,7 @@ function renderPage({ title, content }) {
       .p-4 { padding:16px; }
       .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
       .input { width:100%; background:#0b1220; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
-      .btn { appearance:none; border:1px solid var(--border); background:#0b1220; color:var(--text); padding:10px 14px; border-radius:10px; text-decoration:none; display:inline-block; }
+      .btn { appearance:none; border:1px solid var(--border); background:#0b1220; color:#e5e7eb; padding:10px 14px; border-radius:10px; text-decoration:none; display:inline-block; }
       .btn:hover { border-color: var(--accent); }
       .btn-ghost { background:transparent; }
       .link { color:var(--accent); text-decoration:none; } .link:hover { text-decoration:underline; }
@@ -335,7 +349,7 @@ function renderPage({ title, content }) {
       .eligibility-badge { background: var(--accent); color:#fff; padding:4px 10px; border-radius:999px; font-size:13px; font-weight:500; }
 
       .header { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; }
-      .logo { height: 32px; filter: brightness(400%) contrast(120%); } /* brighten dark logo on dark bg */
+      .logo { height: 32px; filter: brightness(400%) contrast(120%); }
 
       /* chooser */
       .tiles { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
@@ -369,15 +383,14 @@ function normalizePhone(input, defaultCountry = "+1") {
   return `+${digits}`;
 }
 
-/* ---------------- DEMO (multi) ---------------- */
-function mockResults() {
-  // Example multi to demo chooser
+/* ---------------- DEMO (single) ---------------- */
+function mockResultsSingle() {
   return [
     {
       phone: "+17146555375",
       name: "Ryan Dyla",
       papId: 302,
-      emails: ["jorge+oncm61@brook.ai"],
+      emails: ["ryan.dyla@example.com"],
       address: "123 La Cuarta Unit 12A, Morgan Hill, CA 92228",
       dob: "1980-08-01",
       copay: 10.0,
@@ -386,34 +399,6 @@ function mockResults() {
       eligibility: ["CHF","Obesity","Diabetes","Hypertension"],
       clinic: "One New Clinic Medical - MassAdvantage SCHEMA",
       provider: "Dr. Jhay Booh PSDHF"
-    },
-    {
-      phone: "+17146555375",
-      name: "Ryan Dyla (MA Plan)",
-      papId: 489,
-      emails: ["jorge+oncm61+ma@brook.ai"],
-      address: "456 Harbor Blvd, Long Beach, CA 90802",
-      dob: "1980-08-01",
-      copay: 15.0,
-      insurancePrimary: "Primary Insurance",
-      insuranceSecondary: "Secondary Insurance",
-      eligibility: ["Hypertension"],
-      clinic: "Coastal Care Clinic",
-      provider: "Dr. Ana Mora"
-    },
-    {
-      phone: "+17146555375",
-      name: "Ryan C. Dyla",
-      papId: 771,
-      emails: ["jorge+oncm61+alt@brook.ai"],
-      address: "789 Ocean Ave, Long Beach, CA 90803",
-      dob: "1980-08-01",
-      copay: 0.0,
-      insurancePrimary: "Primary Insurance",
-      insuranceSecondary: "",
-      eligibility: [],
-      clinic: "Pacific Medical Group",
-      provider: "Dr. L. Nguyen"
     }
   ];
 }
